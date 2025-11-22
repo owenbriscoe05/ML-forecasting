@@ -1,0 +1,19 @@
+name: ML-forecasting
+channels: [conda-forge]
+dependencies:
+- python=3.11
+- numpy
+- pandas
+- xarray
+- dask
+- netcdf4
+- matplotlib
+- scikit-learn
+- lightgbm
+- cartopy
+- metpy
+- jupyterlab
+- pip
+- pip:
+- cdaspi
+- shap
