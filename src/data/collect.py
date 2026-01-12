@@ -16,11 +16,11 @@ GHCN_DIR = "data/raw/ghcn"
 c = cdsapi.Client()
 
 def download_era5_only():
-    # download_era5_data(dataset="reanalysis-era5-single-levels", variables = [
-    #    "2m_temperature", "surface_pressure", "10m_u_component_of_wind", "10m_v_component_of_wind",
-    #    "total_precipitation", "2m_dewpoint_temperature", "total_column_water_vapour",
-    #    "precipitation_type", "cape",
-    #    "convective_inhibition", "boundary_layer_height", "surface_solar_radiation_downwards"]) 
+    download_era5_data(dataset="reanalysis-era5-single-levels", variables = [
+        "2m_temperature", "surface_pressure", "10m_u_component_of_wind", "10m_v_component_of_wind",
+        "total_precipitation", "2m_dewpoint_temperature", "total_column_water_vapour",
+        "precipitation_type", "cape",
+        "convective_inhibition", "boundary_layer_height", "surface_solar_radiation_downwards"]) 
     
 
     download_era5_data(dataset="reanalysis-era5-pressure-levels", variables = [

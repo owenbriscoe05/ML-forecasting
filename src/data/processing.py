@@ -46,8 +46,6 @@ def rank_stations(start_year, end_year):
 
     print(results)
     ranking = pd.DataFrame(results).sort_values(by="good_coverage", ascending = False)
-    # print(ranking)
-    # print(len(ranking["good_coverage" == True]))
     return ranking
 
 def clean_selected_data(stations):
@@ -80,35 +78,52 @@ def unzip_era5():
                 zip_ref.extractall(extract_to)
 
 def collect_era5():
-    file_pattern = os.path.join(era5_path, "**/*.nc")
+    surface_file_pattern = os.path.join(era5_path, "*extracted/*.nc")
+    # pressure level data was downloaded one variable at a time
     ds = xr.open_mfdataset(
-        file_pattern,
+        surface_file_pattern,
         combine="by_coords",
-        chunks={"time": 24},
-        engine="netcdf4",
-        data_vars="minimal",
         coords="minimal",
-        compat="override"
+        compat="override",
+        engine="netcdf4",
+        chunks="auto"
     )
         
     
+    return ds
+
+def collect_era5_pressure():
+    # pressure level data was downloaded one variable at a time
+    plvl_file_pattern = os.path.join("./data/raw/*pressure-levels*.nc")
+    ds = xr.open_mfdataset(
+        plvl_file_pattern,
+        combine="by_coords",
+        coords="minimal",
+        compat="override",
+        engine="netcdf4",
+        chunks="auto"
+    )
+
     return ds
 
 
 
 
 
-def merge_with_era5(ghcn, era5, lat, lon):
+def merge_with_era5(ghcn, era5_s, era5_p, lat, lon):
+    """merge ghcn station df with era5 dfs"""
     merged = pd.DataFrame
+    era5 = xr.merge([era5_s, era5_p], compat="minimal", join="inner")
+    # use nearest datapoints to station's lat and lon to reduce era5 extent
     point_ds = era5.sel(latitude=lat, longitude=lon, method="nearest").compute()
+    print(point_ds.head(5))
 
     if "valid_time" in point_ds.coords:
         point_ds = point_ds.rename({"valid_time": "time"})
 
     daily_era5 = xr.Dataset()
-    daily_era5["era5_temp_mean"] = point_ds["t2m"].resample(time="1D").mean() - 273.15
-    daily_era5["era5_precip_sum"] = point_ds["tp"].resample(time="1D").sum() * 1000
-    # daily_era5["era5_precip_type"] = point_ds["ptype"].resample(time="1D").
+    # build dataset columns
+    daily_era5 = build_columns(daily_era5, point_ds)
 
     era5_df = daily_era5.to_dataframe().reset_index()
     era5_df = era5_df.rename(columns={"time": "date"})
@@ -119,17 +134,26 @@ def merge_with_era5(ghcn, era5, lat, lon):
     merged = pd.merge(ghcn, era5_df, on="date", how="inner")
 
     return merged
-        
+
+def build_columns(era5, point_ds):
+    era5["era5_temp_mean"] = point_ds["t2m"].resample(time="1D").mean() - 273.15
+    era5["era5_precip_sum"] = point_ds["tp"].resample(time="1D").sum() * 1000
+    # era5["era5_precip_type"] = point_ds["ptype"].resample(time="1D").
+    era5["era5_wind_x"] = point_ds["u10"].resample(time="1D").mean()
+    era5["era5_wind_y"] = point_ds["v10"].resample(time="1D").mean()
+
+    return era5
 
 def build_features(df):
     ...
 
 
 ranking = rank_stations(START_YEAR, END_YEAR)
-selected = ranking.head(5)
-# unzip_era5()
-xr_era5 = collect_era5()
-print(xr_era5)
+selected = ranking.head(6)
+print(selected)
+unzip_era5()
+xr_era5_surface = collect_era5()
+xr_era5_pressure = collect_era5_pressure()
 print("save complete")
 
 metadata_df = get_ghcn_stations(AREA)
@@ -148,12 +172,15 @@ for station in selected_with_coords.itertuples():
     df_ghcn["value"] = df_ghcn["value"] / 10
 
     # Merge with ERA5 using the coordinates from 'selected_with_coords'
-    merged_data = merge_with_era5(df_ghcn, xr_era5, station.lat, station.lon)
+    merged_data = merge_with_era5(df_ghcn, xr_era5_surface, xr_era5_pressure, station.lat, station.lon)
+
+    # Build features for this training set
+    final_data = build_features(merged_data)
     
     # Save this specific station's training file
     # merged_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
-    print(merged_data)
-    merged_data.to_csv("~/Downloads/check_data.csv")
+    print(final_data)
+    final_data.to_csv("~/Downloads/check_data_3.csv")
     break
 # merged_data = merge_with_era5(cleaned, xr_era5)
 
