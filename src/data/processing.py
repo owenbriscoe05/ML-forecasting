@@ -125,6 +125,7 @@ def merge_with_era5(ghcn, era5_s, era5_p, lat, lon):
     # build dataset columns
     daily_era5 = build_columns(daily_era5, point_ds)
 
+
     era5_df = daily_era5.to_dataframe().reset_index()
     era5_df = era5_df.rename(columns={"time": "date"})
 
@@ -136,13 +137,79 @@ def merge_with_era5(ghcn, era5_s, era5_p, lat, lon):
     return merged
 
 def build_columns(era5, point_ds):
+    levels = point_ds.pressure_level.values.astype(int)
+
+    # need to convert to hPa
+    era5["era5_surface_pressure_mean"] = (point_ds["sp"].resample(time="1D").mean()) / 100
+    high_pressure = (point_ds["sp"] / 100) > 1020
+    low_pressure = (point_ds["sp"] / 100) < 980
+    era5["high_pressure_hours"] = high_pressure.resample(time="1D").sum()
+    era5["low_pressure_hours"] = low_pressure.resample(time="1D").sum()
+
+    # need to convert to Celsius
     era5["era5_temp_mean"] = point_ds["t2m"].resample(time="1D").mean() - 273.15
+    era5["era5_high_temp"] = point_ds["t2m"].resample(time="1D").max() - 273.15
+    era5["era5_low_temp"] = point_ds["t2m"].resample(time="1D").min() - 273.15
+    era5["era5_dewpoint_mean"] = point_ds["d2m"].resample(time="1D").mean() - 273.15
+
+    # and need to convert from m to mm for readability
     era5["era5_precip_sum"] = point_ds["tp"].resample(time="1D").sum() * 1000
-    # era5["era5_precip_type"] = point_ds["ptype"].resample(time="1D").
-    era5["era5_wind_x"] = point_ds["u10"].resample(time="1D").mean()
-    era5["era5_wind_y"] = point_ds["v10"].resample(time="1D").mean()
+    is_precipitating = point_ds["tp"] > 0
+    era5["era5_precip_hours"] = is_precipitating.resample(time="1D").sum()
+    era5["era5_wind_x_surface_mean"] = point_ds["u10"].resample(time="1D").mean()
+    era5["era5_wind_y_surface_mean"] = point_ds["v10"].resample(time="1D").mean()
+    era5["era5_cape_mean"] = point_ds["cape"].resample(time="1D").mean()
+    era5["era5_cin_mean"] = point_ds["cin"].resample(time="1D").mean()
+    high_cape = point_ds["cape"] > 2500
+    era5["era5_significant_cape"] = high_cape.resample(time="1D").sum()
+    era5["column_water_vapor_mean"] = point_ds["tcwv"].resample(time="1D").mean()
+
+    # pressure level columns
+    for level in levels:
+        suffix=f"_{level}hPa"
+
+        # need to reduce to level dimension
+        level_slice = point_ds.sel(pressure_level=level)
+
+        era5[f"era5_temp_mean{suffix}"] = level_slice["t"].resample(time="1D").mean() - 273.15
+        era5[f"era5_wind_x_mean{suffix}"] = level_slice["u"].resample(time="1D").mean() 
+        era5[f"era5_wind_y_mean{suffix}"] = level_slice["v"].resample(time="1D").mean()
+
+        # z is given in m^2 / s^2 in the era5 raw data
+        era5[f"era5_geopotential_mean{suffix}"] = (level_slice["z"].resample(time="1D").mean()) / 9.81
+
+        # convert to g/kg (from kg/kg)
+        era5[f"era5_specific_humidity_mean{suffix}"] = (level_slice["q"].resample(time="1D").mean()) * 1000
+
+    ## had issues downloading ptype data, so will use proxies
+    # using 850hPa level to check for potential freezing rain / ice
+    level_850 = point_ds.sel(pressure_level=850)
+    # snow often falls above freezing, so will consider up to 2ºC
+    potential_snow = (point_ds["t2m"] < 275.15) & (point_ds["tp"] > 0) & (level_850["t"] < 273.15)
+    # for ice or freezing rain, need a section of warm air for precip to fall through, often occurs around 850 level
+    potential_ice = (point_ds["t2m"] < 273.15) & (point_ds["tp"] > 0) & (level_850["t"] > 273.15)
+    era5["era5_potential_snow_hours"] = potential_snow.resample(time="1D").sum()
+    era5["era5_potential_ice_hours"] = potential_ice.resample(time="1D").sum()
+
 
     return era5
+
+def pivot_ghcn(df):
+    # ghcn_cols = ["id", "date", "element", "value"]
+    era5_cols = [c for c in df.columns if c not in ["element", "value", "mflag", "qflag", "sflag", "obs_time", "Unnamed: 0"]]
+
+    df_era5 = df[era5_cols].drop_duplicates(subset=["id", "date"])
+    df_era5 = df_era5[df_era5["qflag"].isna()]
+
+    df_ghcn_wide = df.pivot_table(
+        index=["id", "date"],
+        columns="element",
+        values="value"
+    ).reset_index()
+
+    final_df = pd.merge(df_ghcn_wide, df_era5, on=["id", "date"], how="inner")
+
+    return final_df
 
 def build_features(df):
     ...
@@ -174,14 +241,14 @@ for station in selected_with_coords.itertuples():
     # Merge with ERA5 using the coordinates from 'selected_with_coords'
     merged_data = merge_with_era5(df_ghcn, xr_era5_surface, xr_era5_pressure, station.lat, station.lon)
 
+    # move ghcn element, value data into column format
+    pivoted_data = pivot_ghcn(merged_data)
+
     # Build features for this training set
-    final_data = build_features(merged_data)
+    # final_data = build_features(merged_data)
     
     # Save this specific station's training file
-    # merged_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
-    print(final_data)
-    final_data.to_csv("~/Downloads/check_data_3.csv")
-    break
+    pivoted_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
 # merged_data = merge_with_era5(cleaned, xr_era5)
 
 
