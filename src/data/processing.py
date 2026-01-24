@@ -12,7 +12,45 @@ era5_path = Path("./data/raw/era5/")
 START_YEAR = 2000
 END_YEAR = 2025
 
+def main():
+    ranking = rank_stations(START_YEAR, END_YEAR)
+    selected = ranking.head(6)
+    print(selected)
+    unzip_era5()
+    xr_era5_surface = collect_era5()
+    xr_era5_pressure = collect_era5_pressure()
+    print("save complete")
+
+    metadata_df = get_ghcn_stations(AREA)
+    selected_with_coords = pd.merge(selected, metadata_df[["id", "lat", "lon"]],
+                                left_on="station_id", right_on="id")
+
+    for station in selected_with_coords.itertuples():
+        # Load and clean ONLY this station
+        df_ghcn = pd.read_csv(f"{directory_path}/{station.station_id}.csv.gz", 
+                            header=None, 
+                            names=["id", "date", "element", "value", "mflag", "qflag", "sflag", "obs_time"])
+        
+        # Clean ghcn data (i.e. datetime and unit conversion)
+        df_ghcn["date"] = pd.to_datetime(df_ghcn["date"], format="%Y%m%d")
+        df_ghcn = df_ghcn[(df_ghcn["date"].dt.year >= START_YEAR) & (df_ghcn["date"].dt.year <= END_YEAR)]
+        df_ghcn["value"] = df_ghcn["value"] / 10
+
+        # Merge with ERA5 using the coordinates from 'selected_with_coords'
+        merged_data = merge_with_era5(df_ghcn, xr_era5_surface, xr_era5_pressure, station.lat, station.lon)
+
+        # move ghcn element, value data into column format
+        pivoted_data = pivot_ghcn(merged_data)
+
+        # Build features for this training set
+        # final_data = build_features(merged_data)
+        
+        # Save this specific station's training file
+        pivoted_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
+    # merged_data = merge_with_era5(cleaned, xr_era5)
+
 def rank_stations(start_year, end_year):
+    """ranks ghcn station based on (mainly) quantity of data"""
     results = []
 
     for file in directory_path.iterdir():
@@ -49,6 +87,7 @@ def rank_stations(start_year, end_year):
     return ranking
 
 def clean_selected_data(stations):
+    """optional cleaning function if workflow changes from for-loop-centric flow"""
     cleaned = []
     for s in stations.itertuples():
         name = s.station_id
@@ -137,6 +176,7 @@ def merge_with_era5(ghcn, era5_s, era5_p, lat, lon):
     return merged
 
 def build_columns(era5, point_ds):
+    """builds more useful dataframe columns -- using era5 hourly data -- to merge with ghcn daily data"""
     levels = point_ds.pressure_level.values.astype(int)
 
     # need to convert to hPa
@@ -196,10 +236,10 @@ def build_columns(era5, point_ds):
 
 def pivot_ghcn(df):
     # ghcn_cols = ["id", "date", "element", "value"]
+    df = df[df["qflag"].isna()]
     era5_cols = [c for c in df.columns if c not in ["element", "value", "mflag", "qflag", "sflag", "obs_time", "Unnamed: 0"]]
 
     df_era5 = df[era5_cols].drop_duplicates(subset=["id", "date"])
-    df_era5 = df_era5[df_era5["qflag"].isna()]
 
     df_ghcn_wide = df.pivot_table(
         index=["id", "date"],
@@ -215,40 +255,7 @@ def build_features(df):
     ...
 
 
-ranking = rank_stations(START_YEAR, END_YEAR)
-selected = ranking.head(6)
-print(selected)
-unzip_era5()
-xr_era5_surface = collect_era5()
-xr_era5_pressure = collect_era5_pressure()
-print("save complete")
-
-metadata_df = get_ghcn_stations(AREA)
-selected_with_coords = pd.merge(selected, metadata_df[["id", "lat", "lon"]],
-                               left_on="station_id", right_on="id")
-
-for station in selected_with_coords.itertuples():
-    # Load and clean ONLY this station
-    df_ghcn = pd.read_csv(f"{directory_path}/{station.station_id}.csv.gz", 
-                          header=None, 
-                          names=["id", "date", "element", "value", "mflag", "qflag", "sflag", "obs_time"])
-    
-    # Clean ghcn data (i.e. datetime and unit conversion)
-    df_ghcn["date"] = pd.to_datetime(df_ghcn["date"], format="%Y%m%d")
-    df_ghcn = df_ghcn[(df_ghcn["date"].dt.year >= START_YEAR) & (df_ghcn["date"].dt.year <= END_YEAR)]
-    df_ghcn["value"] = df_ghcn["value"] / 10
-
-    # Merge with ERA5 using the coordinates from 'selected_with_coords'
-    merged_data = merge_with_era5(df_ghcn, xr_era5_surface, xr_era5_pressure, station.lat, station.lon)
-
-    # move ghcn element, value data into column format
-    pivoted_data = pivot_ghcn(merged_data)
-
-    # Build features for this training set
-    # final_data = build_features(merged_data)
-    
-    # Save this specific station's training file
-    pivoted_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
-# merged_data = merge_with_era5(cleaned, xr_era5)
+if __name__ == "__main__":
+    main()
 
 
