@@ -15,6 +15,7 @@ def load_and_pivot(file_path):
     for file in files:
         if (file.contains(".csv")):
             df_all = pd.concat([df_all, file])
+    
         
 
 

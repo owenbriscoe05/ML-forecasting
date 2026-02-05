@@ -48,6 +48,8 @@ def main():
         # Save this specific station's training file
         pivoted_data.to_csv(f"data/processed/{station.station_id}_merged.csv", index=False)
     # merged_data = merge_with_era5(cleaned, xr_era5)
+    final = concatenate_cols()
+    final.to_csv("data/processed/full_dataset_1.csv", index=False)
 
 def rank_stations(start_year, end_year):
     """ranks ghcn station based on (mainly) quantity of data"""
@@ -250,6 +252,25 @@ def pivot_ghcn(df):
     final_df = pd.merge(df_ghcn_wide, df_era5, on=["id", "date"], how="inner")
 
     return final_df
+
+def concatenate_cols():
+    file_path = Path("./data/processed/")
+    df_all = pd.DataFrame()
+    files = list(file_path.iterdir())
+
+    for file in files:
+        print(file)
+        # gitkeep file obviously can't be included in the dataframe
+        if (".gitkeep" in file.name or "full_dataset.csv" in file.name):
+            continue
+        df_curr = pd.read_csv(file)
+        df_all = pd.concat([df_all, df_curr])
+    ghcn = get_ghcn_stations(AREA)
+    cols_to_keep = df_all.columns.tolist() + ["elev"]
+    df_with_elev = pd.merge(df_all, ghcn, on="id", how="inner")
+    df_with_elev = df_with_elev[cols_to_keep]
+
+    return df_with_elev
 
 def build_features(df):
     ...
